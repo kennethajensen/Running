@@ -14,6 +14,8 @@ set_api_key("9b542ab4bf664712")
 # font_import()
 loadfonts(device = "win")
 
+#### Constants and Functions ####
+
 # Constants
 origin_for_dates         <- "1899-12-30 00:00:00 America/Chicago"
 secs_per_day             <- 24* 60 * 60
@@ -25,7 +27,6 @@ weather_normals_ws_name  <- "Weather Normals"   # Name of the worksheet with wea
 # Get the current time to determine if a race start is in the past or in the future
 current_time <- Sys.time()
 
-#### Functions ####
 # Date and time conversion from the Google Sheets format to the R POSIX format
 gs_date_to_posix <- function(date_in_days)
 {
@@ -111,7 +112,7 @@ running_events <- within(running_events,
                            
                          })
 
-#### Loading Chicago weather data for past races ####
+#### Loading Chicago weather data for all races ####
 
 # First determine if the Google Sheet with weather data already exists
 weather_sheet_exists <- tryCatch(
@@ -148,7 +149,6 @@ if(weather_sheet_exists)
     weather_actuals_ws <- within(weather_actuals_ws,
                                  {
                                    race_date       <- gs_date_to_posix(race_date)
-                                   race_start_time <- gs_date_to_posix(race_start_time)
                                    date            <- gs_date_to_posix(date)
                                  })
     
@@ -178,8 +178,7 @@ if(weather_sheet_exists)
     message(weather_actuals_ws_name, ": Converting dates")
     weather_normals_ws <- within(weather_normals_ws,
                                  {
-                                   race_date       <- gs_date_to_posix(race_date)
-                                   race_start_time <- gs_date_to_posix(race_start_time)
+                                   race_date <- gs_date_to_posix(race_date)
                                  })
     
     # Get a list of the race dates for which the weather has already been retrieved
@@ -222,10 +221,9 @@ for (ii in 1:nrow(running_events))
 # for (ii in 18:22)
 {
   race_date       <- running_events[ii, "race_date"]
-  race_start_time <- running_events[ii, "race_start_time"]
   message("ii = ", ii, " - Race Date = ", c(running_events[ii, "race_YYYYMMDD"]))
   # Determine if the current race is in the past
-  if(race_start_time[1,1] < current_time)
+  if(race_date[1,1] < current_time)
   {
     # Determine if the weather for current race date has been retrieved previously
     if(!(is.element(race_date, race_dates_w_weather_actuals$race_date)))
@@ -243,10 +241,7 @@ for (ii in 1:nrow(running_events))
       weather_location <- set_location(zip_code = weather_location_default)
       weather_this_race_date <- history(weather_location,
                                         date = running_events[ii, "race_YYYYMMDD"])
-      # Add the race start time and the race date to the dataframe
-      weather_this_race_date <- merge(race_start_time,
-                                      weather_this_race_date,
-                                      all.x = TRUE)
+      # Add the race date to the dataframe
       weather_this_race_date <- merge(race_date,
                                       weather_this_race_date,
                                       all.x = TRUE)
@@ -267,7 +262,7 @@ for (ii in 1:nrow(running_events))
       # The weather for this race date has been retrieved earlier
       message("The weather for ", c(running_events[ii, "race_YYYYMMDD"]), " was retrieved earlier")
     }
-  } else if(race_start_time[1,1] >= current_time)
+  } else if(race_date[1,1] >= current_time)
   {
     # Daily weather normals for future race dates
     # Code to handle these will be developed later
@@ -290,10 +285,7 @@ for (ii in 1:nrow(running_events))
       weather_this_race_date <- planner(weather_location,
                                         start_date = running_events[ii, "race_MMDD"],
                                         end_date = running_events[ii, "race_MMDD"])
-      # Add the race start time and the race date to the dataframe
-      weather_this_race_date <- merge(race_start_time,
-                                      weather_this_race_date,
-                                      all.x = TRUE)
+      # Add the race date to the dataframe
       weather_this_race_date <- merge(race_date,
                                       weather_this_race_date,
                                       all.x = TRUE)
@@ -316,6 +308,8 @@ for (ii in 1:nrow(running_events))
     }
   }
 }
+running_events$race_YYYYMMDD <- NULL
+running_events$race_MMDD     <- NULL
 
 # If any new weather actuals were retrieved, then create the Google Sheet, add the worksheets
 # and add the new records to the worksheets as needed
@@ -413,8 +407,16 @@ if(exists("weather_normals"))
 
 # Only keep the actual weather records that correspond with the time of day for a race on that date
 # Compute the time difference between the weather observation and the race start time
+race_dates_and_times = subset(running_events, select = c(race_date, race_start_time, race_mid_time))
+race_dates_and_times <- within(race_dates_and_times,
+                               {
+                                 race_mid_time[is.na(race_mid_time)] <- race_start_time[is.na(race_mid_time)]
+                               })
+weather_actuals <- merge(weather_actuals, 
+                         race_dates_and_times, 
+                         by = "race_date")
 weather_actuals$minutes_race_to_weather <- abs(difftime(weather_actuals$date, 
-                                                        weather_actuals$race_start_time, 
+                                                        weather_actuals$race_mid_time, 
                                                         units = "mins"))
 # Aggregate the dataframe by the race date and computing the minimum time difference between
 # the race start time and the weather observation
@@ -424,12 +426,15 @@ closest_weather_actual <- aggregate(x   = weather_actuals["minutes_race_to_weath
 weather_actuals <- merge(weather_actuals,
                          closest_weather_actual)
 rm(closest_weather_actual)
+weather_actuals$race_start_time <- NULL
+weather_actuals$race_mid_time <- NULL
 weather_actuals$minutes_race_to_weather <- NULL
+running_events$race_mid_time <- NULL
 
 
 # Clean up the weather data to include only the relevant features
 # Weather actuals
-weather_actuals = subset(weather_actuals, select = c(race_date, race_start_time, cond, precip, temp))
+weather_actuals = subset(weather_actuals, select = c(race_date, cond, precip, temp))
 names(weather_actuals)[names(weather_actuals)=="cond"]   <- "cond_actual"
 names(weather_actuals)[names(weather_actuals)=="precip"] <- "precip_actual"
 names(weather_actuals)[names(weather_actuals)=="temp"]   <- "temp_actual"
@@ -449,7 +454,7 @@ weather_normals <- within(weather_normals,
                             temp <- (temp_low_avg + temp_high_avg) / 2
                             precip <- precip_avg
                           })
-weather_normals = subset(weather_normals, select = c(race_date, race_start_time, cond, precip, temp))
+weather_normals = subset(weather_normals, select = c(race_date, cond, precip, temp))
 names(weather_normals)[names(weather_normals)=="cond"]   <- "cond_normal"
 names(weather_normals)[names(weather_normals)=="precip"] <- "precip_normal"
 names(weather_normals)[names(weather_normals)=="temp"]   <- "temp_normal"
@@ -479,12 +484,19 @@ weather_data <- within(weather_data,
                          precip_normal <- NULL
                        })
 
+# Merge the race data and the weather data
+running_events <- merge(running_events,
+                        weather_data,
+                        by = "race_date",
+                        all.x = TRUE)
+
 # Clean up the environment by removing objects that are no longer needed
 if(exists("first_weather_actual"))         rm(first_weather_actual)
 if(exists("first_weather_normal"))         rm(first_weather_normal)
 if(exists("ii"))                           rm(ii)
 if(exists("race_date"))                    rm(race_date)
 if(exists("race_start_time"))              rm(race_start_time)
+if(exists("race_dates_and_times"))         rm(race_dates_and_times)
 if(exists("weather_location_default"))     rm(weather_location_default)
 if(exists("weather_location"))             rm(weather_location)
 if(exists("weather_actuals"))              rm(weather_actuals)
@@ -501,24 +513,7 @@ if(exists("weather_normals_ws_exists"))    rm(weather_normals_ws_exists)
 if(exists("weather_normals_ws"))           rm(weather_normals_ws)
 if(exists("weather_sheet"))                rm(weather_sheet)
 if(exists("weather_this_race_date"))       rm(weather_this_race_date)
-
-# Merge the race data and the weather data
-running_events <- merge(running_events,
-                        weather_data,
-                        by = c("race_date, race_start_time"),
-                        all.x = TRUE)
-
-
-
-
-
-
-
-
-
-
-
-
+if(exists("weather_data"))                 rm(weather_data)
 
 
 #### Split the data into races with (past) and without (future) a finishing time ####
@@ -566,14 +561,14 @@ ggplot(running_events_past, aes(temperature, race_pace, colour = race_distance_n
 
 
 # Linear Regression Model
-model_race_pace_lm <- lm(race_pace_secs ~ race_year + race_ordinal_date + race_distance_miles + race_shoes + temperature + condition + precipitation, running_events_past)
+model_race_pace_lm <- lm(race_pace_secs ~ race_year + race_ordinal_date + sqrt(race_distance_miles) + temperature + precipitation, running_events_past)
 running_events_past$race_pace_secs_lm <- round(fitted(model_race_pace_lm), digits = 0)
 running_events_past$race_pace_secs_lm_residuals <- round(residuals(model_race_pace_lm), digits = 0)
-
 running_events_past$race_pace_lm <- as.POSIXct(running_events_past$race_pace_secs_lm,
                                                origin = origin_for_dates,
                                                tz = "UTC")
 
+# Estimated by actual race pace
 ggplot(running_events_past, aes(x = race_pace, y = race_pace_lm)) +
   geom_point(aes(colour=factor(race_distance_name), shape=factor(race_shoes)), size = 3) +
     labs(colour = "Race Distance", 
@@ -585,6 +580,18 @@ ggplot(running_events_past, aes(x = race_pace, y = race_pace_lm)) +
   geom_smooth(method = "loess") +
   theme(text=element_text(family = "Tahoma"))
 
+# Estimated race pace by race distance
+ggplot(running_events_past, aes(x = race_distance_miles, y = race_pace_lm)) +
+  geom_point(aes(colour=factor(race_distance_name), shape=factor(race_shoes)), size = 3) +
+  labs(colour = "Race Distance", 
+       shape = "Shoes",
+       x = "Race Distance (miles)", 
+       y = "Fitted Race Pace (secs/mi)",
+       title = "Linear Regression Model Fit",
+       caption = latest_race_date_txt) +
+  theme(text=element_text(family = "Tahoma"))
+
+# Residuals by race date
 ggplot(running_events_past, aes(race_date, race_pace_secs_lm_residuals)) +
   geom_point(aes(colour=factor(race_distance_name), shape=factor(race_shoes)), size = 3) +
   labs(colour = "Race Distance", 
@@ -596,8 +603,25 @@ ggplot(running_events_past, aes(race_date, race_pace_secs_lm_residuals)) +
   geom_smooth(method = "lm") +
   theme(text=element_text(family = "Tahoma"))
 
+# Residuals by race distance
+ggplot(running_events_past, aes(x = race_distance_miles, y = race_pace_secs_lm_residuals)) +
+  geom_point(aes(colour=factor(race_distance_name), shape=factor(race_shoes)), size = 3) +
+  labs(colour = "Race Distance", 
+       shape = "Shoes",
+       x = "Race Distance (miles)", 
+       y = "Residuals (secs/mi)",
+       title = "Linear Regression Model Fit",
+       caption = latest_race_date_txt) +
+  theme(text=element_text(family = "Tahoma"))
+
+
+# Predictions based on the linear regression
+running_events_future$race_pace_secs_lm <- round(predict(model_race_pace_lm, newdata = running_events_future), digits = 1)
+running_events_future$race_chip_time_secs_lm <-round(running_events_future$race_distance_miles * running_events_future$race_pace_secs_lm, digits = 0)
+
+
 # Bayesian Regularization for Feed-Forward Neural Networks
-model_race_pace_brnn <- train(race_pace_secs ~ race_year + race_ordinal_date + race_distance_miles + race_shoes + temperature + condition + precipitation, 
+model_race_pace_brnn <- train(race_pace_secs ~ race_year + race_ordinal_date + race_distance_miles + race_shoes + temperature + precipitation, 
                               data = running_events_past, 
                               method = "brnn")
 running_events_past$race_pace_secs_brnn <- round(fitted(model_race_pace_brnn), digits = 0)
@@ -628,3 +652,7 @@ ggplot(running_events_past, aes(race_date, race_pace_secs_brnn_residuals)) +
        caption = latest_race_date_txt) +
   geom_smooth(method = "lm") +
   theme(text=element_text(family = "Tahoma"))
+
+# Predictions based on the linear regression
+running_events_future$race_pace_secs_brnn <- round(predict(model_race_pace_brnn, newdata = running_events_future), digits = 1)
+running_events_future$race_chip_time_secs_brnn <-round(running_events_future$race_distance_miles * running_events_future$race_pace_secs_brnn, digits = 0)
